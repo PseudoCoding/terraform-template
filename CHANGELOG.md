@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - N/A
 
+## [1.0.1] - 2025-10-04
+
+### Changed
+- **Environment Configuration Files**: Improved formatting consistency
+  - Standardized spacing in subnet configuration maps across all environment files
+  - Consistent comment formatting and alignment for better readability
+  - Applied consistent spacing to variable assignments in dev, stage, test, and prod configurations
+
 ## [1.0.0] - 2025-10-04
 
 ### Added
