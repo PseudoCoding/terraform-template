@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - N/A
 
+## [1.0.3] - 2025-10-04
+
+### Added
+- **Automated Release Workflow**: New GitHub Actions workflow for automatic releases
+  - Automatically detects new versions from CHANGELOG.md updates
+  - Creates git tags and GitHub releases when changelog is updated
+  - Extracts release notes from changelog content
+  - Prevents duplicate releases with tag existence checking
+  - Triggers only on main branch when CHANGELOG.md is modified
+
 ## [1.0.2] - 2025-10-04
 
 ### Fixed
