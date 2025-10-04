@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - N/A
 
+## [1.0.2] - 2025-10-04
+
+### Fixed
+- **GitHub Actions Workflow**: Fixed SARIF upload step in terraform.yml
+  - Added conditional logic to only upload SARIF results for public repositories
+  - Added documentation explaining GitHub Advanced Security requirements
+  - Prevents workflow failures on private repositories without Advanced Security
+
 ## [1.0.1] - 2025-10-04
 
 ### Changed

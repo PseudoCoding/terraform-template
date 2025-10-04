@@ -108,7 +108,11 @@ jobs:
         output_file_path: checkov-results.sarif
 
     - name: Upload Checkov results to GitHub Advanced Security
-      if: always()
+      # Note: This step requires GitHub Advanced Security to be enabled
+      # - Free for public repositories
+      # - Paid feature for private repositories
+      # Remove this step if you don't have Advanced Security enabled
+      if: always() && github.event.repository.visibility == 'public'
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: checkov-results.sarif
