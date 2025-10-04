@@ -1,0 +1,323 @@
+name: 'Terraform CI/CD Pipeline'
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - stage
+        - test
+        - prod
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+        - plan
+        - apply
+        - destroy
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  TF_VERSION: '1.5.7'
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+jobs:
+  terraform-check:
+    name: 'Terraform Format and Validate'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Terraform Format Check
+      id: fmt
+      run: terraform fmt -check -recursive
+      continue-on-error: true
+
+    - name: Terraform Format Results
+      if: steps.fmt.outcome == 'failure'
+      run: |
+        echo "❌ Terraform format check failed"
+        echo "Run 'terraform fmt -recursive' to fix formatting issues"
+        exit 1
+
+    - name: Terraform Validate
+      id: validate
+      run: |
+        terraform init -backend=false
+        terraform validate
+
+    - name: Comment PR - Format Issues
+      if: github.event_name == 'pull_request' && steps.fmt.outcome == 'failure'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '❌ **Terraform Format Check Failed**\n\nPlease run `terraform fmt -recursive` to fix formatting issues.'
+          })
+
+  security-scan:
+    name: 'Security Scan'
+    runs-on: ubuntu-latest
+    needs: terraform-check
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Run tfsec
+      uses: aquasecurity/tfsec-action@v1.0.3
+      with:
+        soft_fail: true
+
+    - name: Run Checkov
+      id: checkov
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: .
+        framework: terraform
+        soft_fail: true
+        output_format: sarif
+        output_file_path: checkov-results.sarif
+
+    - name: Upload Checkov results to GitHub Advanced Security
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: checkov-results.sarif
+
+  terraform-plan:
+    name: 'Terraform Plan'
+    runs-on: ubuntu-latest
+    needs: [terraform-check, security-scan]
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'plan')
+    strategy:
+      matrix:
+        environment: [dev, stage, test]
+    
+    env:
+      ENVIRONMENT: ${{ matrix.environment }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: |
+          {
+            "clientId": "${{ env.AZURE_CLIENT_ID }}",
+            "clientSecret": "${{ env.AZURE_CLIENT_SECRET }}",
+            "subscriptionId": "${{ env.AZURE_SUBSCRIPTION_ID }}",
+            "tenantId": "${{ env.AZURE_TENANT_ID }}"
+          }
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Plan
+      id: plan
+      run: |
+        terraform plan -var-file=config/${{ env.ENVIRONMENT }}.tfvars -out=tfplan-${{ env.ENVIRONMENT }} -no-color
+      continue-on-error: true
+
+    - name: Save Plan Output
+      if: steps.plan.outcome == 'success'
+      run: |
+        terraform show -no-color tfplan-${{ env.ENVIRONMENT }} > tfplan-${{ env.ENVIRONMENT }}.txt
+
+    - name: Upload Plan Artifact
+      if: steps.plan.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-plan-${{ env.ENVIRONMENT }}
+        path: |
+          tfplan-${{ env.ENVIRONMENT }}
+          tfplan-${{ env.ENVIRONMENT }}.txt
+        retention-days: 30
+
+    - name: Comment PR - Plan Results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const environment = '${{ env.ENVIRONMENT }}';
+          const planStatus = '${{ steps.plan.outcome }}';
+          
+          let body = `## 🏗️ Terraform Plan Results - ${environment.toUpperCase()}\n\n`;
+          
+          if (planStatus === 'success') {
+            try {
+              const planOutput = fs.readFileSync(`tfplan-${environment}.txt`, 'utf8');
+              body += `### ✅ Plan Status: Success\n\n`;
+              body += `<details><summary>Show Plan Output</summary>\n\n\`\`\`terraform\n${planOutput}\n\`\`\`\n\n</details>`;
+            } catch (error) {
+              body += `### ✅ Plan Status: Success\n\nPlan completed successfully but output could not be read.`;
+            }
+          } else {
+            body += `### ❌ Plan Status: Failed\n\nThe Terraform plan failed for ${environment} environment. Please check the workflow logs for details.`;
+          }
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
+
+  terraform-apply:
+    name: 'Terraform Apply'
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    if: |
+      (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+    environment: 
+      name: ${{ github.event.inputs.environment || 'dev' }}
+    
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: |
+          {
+            "clientId": "${{ env.AZURE_CLIENT_ID }}",
+            "clientSecret": "${{ env.AZURE_CLIENT_SECRET }}",
+            "subscriptionId": "${{ env.AZURE_SUBSCRIPTION_ID }}",
+            "tenantId": "${{ env.AZURE_TENANT_ID }}"
+          }
+
+    - name: Download Plan Artifact
+      if: github.event_name == 'push'
+      uses: actions/download-artifact@v4
+      with:
+        name: terraform-plan-${{ env.ENVIRONMENT }}
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Apply
+      run: |
+        if [ "${{ github.event_name }}" = "push" ] && [ -f "tfplan-${{ env.ENVIRONMENT }}" ]; then
+          echo "Applying saved plan..."
+          terraform apply tfplan-${{ env.ENVIRONMENT }}
+        else
+          echo "Running fresh apply..."
+          terraform apply -var-file=config/${{ env.ENVIRONMENT }}.tfvars -auto-approve
+        fi
+
+  terraform-destroy:
+    name: 'Terraform Destroy'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    environment: 
+      name: ${{ github.event.inputs.environment }}
+    
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: |
+          {
+            "clientId": "${{ env.AZURE_CLIENT_ID }}",
+            "clientSecret": "${{ env.AZURE_CLIENT_SECRET }}",
+            "subscriptionId": "${{ env.AZURE_SUBSCRIPTION_ID }}",
+            "tenantId": "${{ env.AZURE_TENANT_ID }}"
+          }
+
+    - name: Terraform Init
+      run: terraform init
+
+    - name: Terraform Destroy
+      run: terraform destroy -var-file=config/${{ env.ENVIRONMENT }}.tfvars -auto-approve
+
+  cost-estimation:
+    name: 'Cost Estimation'
+    runs-on: ubuntu-latest
+    needs: terraform-check
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+
+    - name: Setup Infracost
+      uses: infracost/actions/setup@v2
+      with:
+        api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+    - name: Generate Infracost cost estimate
+      run: |
+        infracost breakdown --path . \
+          --terraform-var-file config/dev.tfvars \
+          --format json --out-file /tmp/infracost.json
+
+    - name: Post Infracost comment
+      if: always()
+      run: |
+        infracost comment github --path /tmp/infracost.json \
+          --repo $GITHUB_REPOSITORY \
+          --github-token ${{ secrets.GITHUB_TOKEN }} \
+          --pull-request ${{ github.event.pull_request.number }} \
+          --behavior update
