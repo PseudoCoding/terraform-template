@@ -25,6 +25,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - N/A
 
+## [1.0.4] - 2025-10-17
+
+### Added
+- N/A
+
+### Changed
+- N/A
+
+### Deprecated
+- N/A
+
+### Removed
+- N/A
+
+### Fixed
+- **README.md**: Fixed formatting issue where text was accidentally merged/corrupted
+  - Corrected malformed sentence in repository description
+  - Restored proper text flow and readability
+
+### Security
+- N/A
+
+## [1.0.3] - 2025-10-04
+
+### Added
+
+
 ## [1.0.3] - 2025-10-04
 
 ### Added
@@ -61,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `outputs.tf` - Output value definitions
   - `data.tf` - Data source references (existing resources)
   - `main.tf` - Miscellaneous resources without dedicated files
-  - `compute.tf` - Compute resources (VMs, containers, functions)
+  - `compute.tf` - Compute resources (VMs, containers, functions)s
   - `networking.tf` - Network resources (VNets, NSGs, load balancers)
   - `storage.tf` - Storage resources (storage accounts, containers)
   - `database.tf` - Database resources (SQL, CosmosDB, caches)

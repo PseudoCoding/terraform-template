@@ -1,6 +1,6 @@
 # Terraform Template Repository
 
-A well-structured Terraform template repository designed for infrastruEach file contains environment-specific variables that override defaults.
+A well-structured Terraform template repository designed for managing your infrastructure..
 
 ## 🤖 CI/CD Pipeline
 
